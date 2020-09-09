@@ -1,0 +1,58 @@
+# guideline link: https://confluence.atlassian.com/bitbucket/yaml-anchors-960154027.html
+image: mcr.microsoft.com/dotnet/core/sdk:latest
+
+definitions:
+  steps:
+    - step: &build-client
+        name: "prod build angular app"
+        image: node:10.15.3
+        caches:
+          - node
+        script:
+          - cd NeplusLicense/Client
+          - npm install
+          - npm install @angular/cli -g
+          - ng build --prod --outputPath=wwwroot
+        artifacts: # defining the artifacts to be passed to each future step.
+          - wwwroot/**
+         
+    - step: &build-test
+        name: "Build, Test & Publish"
+        caches:
+          - dotnetcore
+        script:
+          - echo "runs an all branches if pipeline is enabled"
+          - dotnet build
+          # we may update runtime target based on hosting env. win64 is used.
+          - dotnet publish NeplusLicense/NeplusLicense.csproj -c Release -o dist -r win-x64 --self-contained true /p:useapphost=true
+        artifacts: # defining the artifacts to be passed to each future step.
+          - cat wwwroot/**
+          - dist/**
+    - step: &deploy
+        name: "Deploy to the FTP"
+        deployment: test
+        script:
+          - echo "Deploy to the test server"
+          - pipe: atlassian/ftp-deploy:0.3.0
+            variables:
+              USER: $LICENSE_USERNAME             # username of the FTP server (sub-domain username)
+              PASSWORD: $LICENSE_PASSWORD         # password of the FTP server (sub-domain password)
+              SERVER: "ftp://jobharu.com"         # Host of the FTP server
+              REMOTE_PATH: "/"                    # main path for static files. (will deploy inside of license.jobharu.com)
+              LOCAL_PATH:  dist                   # local file path. (artifact)
+              DEBUG: "true"
+              EXTRA_ARGS: "--exclude=App_data/** --exclude=Client/** --exclude-glob=*.scss --exclude-glob=assets/plugins/**" # don't publish static files as we have different repo for that.
+
+pipelines:
+  branches:
+    release/*:
+      - step: *build-client
+      - step: *build-test
+      - step: *deploy
+    master:
+      - step: *build-client
+      - step: *build-test
+      - step:
+          <<: *deploy
+          deployment: production
+          trigger: manual
